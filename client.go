@@ -45,13 +45,13 @@ const (
 type SearchRequest struct {
 	Limit      int
 	Offset     int    // Можно учесть после сортировки
-	Query      string // подстрока в 1 из полей
+	Query      string // Подстрока в 1 из полей
 	OrderField string
 	OrderBy    int
 }
 
 type SearchClient struct {
-	// токен, по которому происходит авторизация на внешней системе, уходит туда через хедер
+	// Токен, по которому происходит авторизация на внешней системе, уходит туда через хедер
 	AccessToken string
 	// урл внешней системы, куда идти
 	URL string
