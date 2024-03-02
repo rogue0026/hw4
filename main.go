@@ -6,34 +6,32 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 )
 
-type DatasetRow struct {
-	XMLName       xml.Name  `xml:"row"`
-	ID            int       `xml:"id"`
-	Guid          string    `xml:"guid"`
-	IsActive      bool      `xml:"isActive"`
-	Balance       string    `xml:"balance"`
-	Picture       string    `xml:"picture"`
-	Age           int       `xml:"age"`
-	EyeColor      string    `xml:"eyeColor"`
-	FirstName     string    `xml:"first_name"`
-	LastName      string    `xml:"last_name"`
-	Gender        string    `xml:"gender"`
-	Company       string    `xml:"company"`
-	Email         string    `xml:"email"`
-	Phone         string    `xml:"phone"`
-	Address       string    `xml:"address"`
-	About         string    `xml:"about"`
-	Registered    time.Time `xml:"registered"`
-	FavoriteFruit string    `xml:"favoriteFruit"`
-}
-
 type DataSet struct {
 	XMLName xml.Name `xml:"root"`
-	Rows    []DatasetRow
+	Rows    []struct {
+		ID            int    `xml:"id"`
+		Guid          string `xml:"guid"`
+		IsActive      bool   `xml:"isActive"`
+		Balance       string `xml:"balance"`
+		Picture       string `xml:"picture"`
+		Age           int    `xml:"age"`
+		EyeColor      string `xml:"eyeColor"`
+		FirstName     string `xml:"first_name"`
+		LastName      string `xml:"last_name"`
+		Gender        string `xml:"gender"`
+		Company       string `xml:"company"`
+		Email         string `xml:"email"`
+		Phone         string `xml:"phone"`
+		Address       string `xml:"address"`
+		About         string `xml:"about"`
+		Registered    string `xml:"registered"`
+		FavoriteFruit string `xml:"favoriteFruit"`
+	} `xml:"row"`
 }
 
 func main() {
@@ -44,12 +42,14 @@ func main() {
 		panic(err)
 	}
 	xmlDecoder := xml.NewDecoder(f)
-	d := make([]DatasetRow, 0)
-	for i := 0; i < len(d); i++ {
-		err = xmlDecoder.Decode(&d)
-		if err != nil {
-			log.Fatalf("ERROR: %s\n", err.Error())
-		}
+	ds := DataSet{}
+	err = xmlDecoder.Decode(&ds)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < len(ds.Rows); i++ {
+		fmt.Println(ds.Rows[i].FirstName + " " + ds.Rows[i].LastName)
+		time.Sleep(time.Second * 1)
 	}
 }
 
@@ -91,10 +91,32 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Offset = off
 
-	// search info in xml file
-	// f, err := os.Open("dataset.xml")
-	// if err != nil {
-	// 	log.Fatalln(err.Error())
-	// }
-	// io.ReadAll()
+	// на основе полученных параметров нужно теперь отдать результат клиенту
+	if req.Query == "Name" {
+		// делаем strings.Contains() по firstы_name + last_name
+		// и отдаем результат обратно клиенту
+	}
+	f, err := os.Open("dataset.xml")
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+	data := DataSet{}
+	err = xml.NewDecoder(f).Decode(&data)
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+}
+
+func makeSort(ds *DataSet, order_field string) {
+	switch order_field {
+	case "ID":
+		sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].ID < ds.Rows[j].ID })
+	case "Age":
+		sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].Age < ds.Rows[j].Age })
+	case "Name":
+		sort.Slice(ds.Rows, func(i int, j int) bool {
+			return ds.Rows[i].FirstName+ds.Rows[i].LastName < ds.Rows[j].FirstName+ds.Rows[j].LastName
+		})
+	}
+
 }
