@@ -4,96 +4,119 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 )
 
-type DataSet struct {
-	XMLName xml.Name `xml:"root"`
-	Rows    []struct {
-		ID            int    `xml:"id"`
-		Guid          string `xml:"guid"`
-		IsActive      bool   `xml:"isActive"`
-		Balance       string `xml:"balance"`
-		Picture       string `xml:"picture"`
-		Age           int    `xml:"age"`
-		EyeColor      string `xml:"eyeColor"`
-		FirstName     string `xml:"first_name"`
-		LastName      string `xml:"last_name"`
-		Gender        string `xml:"gender"`
-		Company       string `xml:"company"`
-		Email         string `xml:"email"`
-		Phone         string `xml:"phone"`
-		Address       string `xml:"address"`
-		About         string `xml:"about"`
-		Registered    string `xml:"registered"`
-		FavoriteFruit string `xml:"favoriteFruit"`
-	} `xml:"row"`
+type UserInfo struct {
+	XMLName       xml.Name `xml:"row"`
+	Id            int      `xml:"id"`
+	Guid          string   `xml:"guid"`
+	IsActive      bool     `xml:"isActive"`
+	Balance       string   `xml:"balance"`
+	Picture       string   `xml:"picture"`
+	Age           int      `xml:"age"`
+	EyeColor      string   `xml:"eyeColor"`
+	FirstName     string   `xml:"first_name"`
+	LastName      string   `xml:"last_name"`
+	Gender        string   `xml:"gender"`
+	Company       string   `xml:"company"`
+	Email         string   `xml:"email"`
+	Phone         string   `xml:"phone"`
+	Address       string   `xml:"address"`
+	About         string   `xml:"about"`
+	Registered    string   `xml:"registered"`
+	FavoriteFruit string   `xml:"favoriteFruit"`
 }
 
-func main() {}
+type Users struct {
+	XMLName xml.Name   `xml:"root"`
+	Info    []UserInfo `xml:"row"`
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search", SearchServer)
+	s := http.Server{
+		Addr:    "localhost:9090",
+		Handler: mux,
+	}
+	fmt.Printf("starting server at %s\n", s.Addr)
+	panic(s.ListenAndServe())
+}
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
-	// Разбираем параметры запроса
-	searchRequest, errResp := parseParams(r)
+	searchRequest, errResp := ParseParams(r)
 	if errResp != nil {
-		SendJSONErrRespone(w, http.StatusBadRequest, *errResp)
+		SendJSONErrResponse(w, http.StatusBadRequest, *errResp)
 		return
 	}
-	// Если с параметрами все ок, то открывает наш xml-файл,
-	// читаем из него данные и в зависимости от параметров запроса возвращаем клиенту
 	f, err := os.Open("dataset.xml")
 	if err != nil {
-		errResp := SearchErrorResponse{Error: err.Error()}
-		SendJSONErrRespone(w, http.StatusInternalServerError, errResp)
+		SendJSONErrResponse(w, http.StatusInternalServerError, SearchErrorResponse{Error: err.Error()})
 		return
 	}
-	data := DataSet{}
-	err = xml.NewDecoder(f).Decode(&data)
-	if err != nil {
-		SendJSONErrRespone(w, http.StatusInternalServerError, SearchErrorResponse{Error: err.Error()})
-		return
-	}
-	makeSort(&data, searchRequest.OrderField, searchRequest.OrderBy)
-	data.Rows = data.Rows[searchRequest.Offset:searchRequest.Limit] // отсекаем лишние записи
-	if searchRequest.Query == "" {                                  // вернуть все записи
-		users := make([]User, 0, len(data.Rows))
-		for i := 0; i < len(data.Rows); i++ {
-			u := User{
-				Id:     data.Rows[i].ID,
-				Name:   fmt.Sprintf("%s %s", data.Rows[i].FirstName, data.Rows[i].LastName),
-				Age:    data.Rows[i].Age,
-				About:  data.Rows[i].About,
-				Gender: data.Rows[i].Gender,
-			}
-			users = append(users, u)
-		}
-		SendJSONResponse(w, http.StatusOK, users)
-	} else if searchRequest.Query == "Name" {
 
+	data, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatalf("%s\n", err.Error())
 	}
+	allUsers := Users{}
+	err = xml.Unmarshal(data, &allUsers)
+	if err != nil {
+		log.Fatalf("%s\n", err.Error())
+	}
+
+	makeSort(allUsers.Info, searchRequest.OrderField, searchRequest.OrderBy)
+
+	if searchRequest.Offset >= len(allUsers.Info) {
+		allUsers.Info = make([]UserInfo, 0)
+	} else {
+		allUsers.Info = allUsers.Info[searchRequest.Offset:]
+	}
+	if searchRequest.Limit > len(allUsers.Info) {
+		searchRequest.Limit = len(allUsers.Info)
+		allUsers.Info = allUsers.Info[:searchRequest.Limit]
+	} else {
+		allUsers.Info = allUsers.Info[:searchRequest.Limit]
+	}
+
+	results := make([]User, 0, len(allUsers.Info))
+	if searchRequest.Query == "" {
+		for _, elem := range allUsers.Info {
+			u := User{
+				Id:     elem.Id,
+				Name:   elem.FirstName + " " + elem.LastName,
+				Age:    elem.Age,
+				About:  elem.About,
+				Gender: elem.Gender,
+			}
+			results = append(results, u)
+		}
+	} else {
+		for _, elem := range allUsers.Info {
+			if strings.Contains(elem.FirstName+elem.LastName, searchRequest.Query) || strings.Contains(elem.About, searchRequest.Query) {
+				u := User{
+					Id:     elem.Id,
+					Name:   elem.FirstName + " " + elem.LastName,
+					Age:    elem.Age,
+					About:  elem.About,
+					Gender: elem.Gender,
+				}
+				results = append(results, u)
+			}
+		}
+	}
+	SendJSONResponse(w, http.StatusOK, results)
 }
 
-func parseParams(r *http.Request) (*SearchRequest, *SearchErrorResponse) {
+func ParseParams(r *http.Request) (*SearchRequest, *SearchErrorResponse) {
 	req := SearchRequest{}
-
-	req.Query = r.URL.Query().Get("query") // "Name", "About" or ""
-	if req.Query != "Name" || req.Query != "About" || req.Query != "" {
-		return nil, &SearchErrorResponse{Error: "bad query parameter"}
-	}
-
-	req.OrderField = r.URL.Query().Get("order_field")
-	if req.OrderField != "ID" || req.OrderField != "Age" || req.OrderField != "Name" {
-		return nil, &SearchErrorResponse{Error: ErrorBadOrderField}
-	}
-
-	ord := r.URL.Query().Get("order_by")
-	if ord != strconv.Itoa(OrderByAsc) || ord != strconv.Itoa(OrderByAsIs) || ord != strconv.Itoa(OrderByDesc) {
-		return nil, &SearchErrorResponse{Error: "bad orderBy parameter"}
-	}
-	req.OrderBy, _ = strconv.Atoi(ord) // не проверяем ошибку, потому что полученный параметр равен 0, 1 или -1 и он преобразуется без ошибки
 
 	lim, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil {
@@ -107,44 +130,64 @@ func parseParams(r *http.Request) (*SearchRequest, *SearchErrorResponse) {
 	}
 	req.Offset = off
 
+	validOrderFields := map[string]struct{}{"id": {}, "age": {}, "name": {}}
+	orderField := r.URL.Query().Get("order_field")
+	if req.OrderField == "" {
+		req.OrderField = "name"
+	}
+	if _, ok := validOrderFields[req.OrderField]; !ok {
+		return nil, &SearchErrorResponse{Error: ErrorBadOrderField}
+	} else {
+		req.OrderField = orderField
+	}
+
+	validOrderBy := map[string]struct{}{
+		strconv.Itoa(OrderByAsIs): {},
+		strconv.Itoa(OrderByAsc):  {},
+		strconv.Itoa(OrderByDesc): {},
+	}
+	ord := r.URL.Query().Get("order_by")
+	if _, ok := validOrderBy[ord]; !ok {
+		return nil, &SearchErrorResponse{Error: "bad orderBy parameter"}
+	}
+	ordBy, err := strconv.Atoi(ord)
+	if err != nil {
+		log.Println("error while parsing order by param")
+	}
+	req.OrderBy = ordBy
+
+	req.Query = r.URL.Query().Get("query")
+
 	return &req, nil
 }
 
-func makeSort(ds *DataSet, orderField string, orderBy int) {
-	if orderBy == OrderByAsc {
+func makeSort(users []UserInfo, orderField string, orderBy int) {
+	if orderBy == OrderByAsc { // в порядке возрастания
 		switch orderField {
-		case "ID":
-			sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].ID < ds.Rows[j].ID })
-		case "Age":
-			sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].Age < ds.Rows[j].Age })
-		case "Name":
-			sort.Slice(ds.Rows, func(i int, j int) bool {
-				return ds.Rows[i].FirstName+ds.Rows[i].LastName < ds.Rows[j].FirstName+ds.Rows[j].LastName
-			})
-		case "":
-			sort.Slice(ds.Rows, func(i int, j int) bool {
-				return ds.Rows[i].FirstName+ds.Rows[i].LastName < ds.Rows[j].FirstName+ds.Rows[j].LastName
+		case "id":
+			sort.Slice(users, func(i int, j int) bool { return users[i].Id < users[j].Id })
+		case "age":
+			sort.Slice(users, func(i int, j int) bool { return users[i].Age < users[j].Age })
+		case "name":
+			sort.Slice(users, func(i int, j int) bool {
+				return users[i].FirstName+users[i].LastName < users[j].FirstName+users[j].LastName
 			})
 		}
 	} else if orderBy == OrderByDesc {
 		switch orderField {
-		case "ID":
-			sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].ID > ds.Rows[j].ID })
-		case "Age":
-			sort.Slice(ds.Rows, func(i int, j int) bool { return ds.Rows[i].Age > ds.Rows[j].Age })
-		case "Name":
-			sort.Slice(ds.Rows, func(i int, j int) bool {
-				return ds.Rows[i].FirstName+ds.Rows[i].LastName > ds.Rows[j].FirstName+ds.Rows[j].LastName
-			})
-		case "":
-			sort.Slice(ds.Rows, func(i int, j int) bool {
-				return ds.Rows[i].FirstName+ds.Rows[i].LastName > ds.Rows[j].FirstName+ds.Rows[j].LastName
+		case "id":
+			sort.Slice(users, func(i int, j int) bool { return users[i].Id > users[j].Id })
+		case "age":
+			sort.Slice(users, func(i int, j int) bool { return users[i].Age > users[j].Age })
+		case "name":
+			sort.Slice(users, func(i int, j int) bool {
+				return users[i].FirstName+users[i].LastName > users[j].FirstName+users[j].LastName
 			})
 		}
 	}
 }
 
-func SendJSONErrRespone(w http.ResponseWriter, status int, response SearchErrorResponse) {
+func SendJSONErrResponse(w http.ResponseWriter, status int, response SearchErrorResponse) {
 	js, err := json.Marshal(&response)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
