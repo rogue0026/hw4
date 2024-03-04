@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -44,6 +46,10 @@ type Users struct {
 }
 
 func SearchServer(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("AccessToken")
+	if token == "" {
+		SendJSONErrResponse(w, http.StatusUnauthorized, SearchErrorResponse{Error: "Bad AccessToken"})
+	}
 	searchRequest, errResp := ParseParams(r)
 	if errResp != nil {
 		SendJSONErrResponse(w, http.StatusBadRequest, *errResp)
@@ -334,13 +340,21 @@ func TestParseParams(t *testing.T) {
 }
 
 func TestFindUsers(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(SearchServer))
-	srchReq := SearchRequest{
+	s := httptest.NewServer(http.HandlerFunc(SearchServer))
+	badAccTokenClient := SearchClient{
+		AccessToken: "",
+		URL:         "http://localhost:8080",
+	}
+	query := SearchRequest{
 		Limit:      10,
 		Offset:     0,
 		Query:      "",
-		OrderField: "age",
-		OrderBy:    OrderByAsc,
+		OrderField: "name",
+		OrderBy:    OrderByAsIs,
 	}
-
+	_, err := badAccTokenClient.FindUsers(query)
+	if err != nil {
+		if errors.Is()	
+	}
+	
 }
