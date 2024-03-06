@@ -16,10 +16,6 @@ import (
 	"time"
 )
 
-const (
-	TestServerURL string = "http://localhost:9090/search"
-)
-
 // код писать тут
 
 type UserInfo struct {
@@ -52,6 +48,7 @@ func SearchServer(w http.ResponseWriter, r *http.Request) {
 	token := r.Header.Get("AccessToken")
 	if token == "" {
 		SendJSONErrResponse(w, http.StatusUnauthorized, SearchErrorResponse{Error: "Bad AccessToken"})
+		return
 	}
 	searchRequest, errResp := ParseParams(r)
 	if errResp != nil {
@@ -189,25 +186,27 @@ func MakeSort(users []UserInfo, orderField string, orderBy int) {
 	}
 }
 
-func SendJSONErrResponse(w http.ResponseWriter, status int, response SearchErrorResponse) {
+func SendJSONErrResponse(w http.ResponseWriter, httpStatus int, response SearchErrorResponse) {
 	js, err := json.Marshal(&response)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
+	} else {
+		w.WriteHeader(httpStatus)
+		w.Write(js)
 	}
-	w.WriteHeader(status)
-	w.Write(js)
 }
 
-func SendJSONResponse(w http.ResponseWriter, status int, users []User) {
+func SendJSONResponse(w http.ResponseWriter, httpStatus int, users []User) {
 	js, err := json.MarshalIndent(&users, "", "    ")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	} else {
+		w.WriteHeader(httpStatus)
+		w.Write(js)
 	}
-	w.WriteHeader(status)
-	w.Write(js)
 }
 
 func TestMakeSort(t *testing.T) {
@@ -353,12 +352,8 @@ func TestParseParams(t *testing.T) {
 
 func TestFindUsersForBadLimit(t *testing.T) {
 
-	s := httptest.NewServer(http.HandlerFunc(SearchServer))
-	s.URL = TestServerURL
-
 	cl := SearchClient{
 		AccessToken: "asdfasdf:123123",
-		URL:         s.URL,
 	}
 
 	srchReq := SearchRequest{
@@ -371,11 +366,9 @@ func TestFindUsersForBadLimit(t *testing.T) {
 }
 
 func TestFindUsersForBadOffset(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(SearchServer))
-	s.URL = TestServerURL
+
 	c := SearchClient{
 		AccessToken: "asdfasdkljfhalksdhjf",
-		URL:         TestServerURL,
 	}
 	r := SearchRequest{
 		Offset: -10,
@@ -386,98 +379,111 @@ func TestFindUsersForBadOffset(t *testing.T) {
 	}
 }
 
-func TestFindUsersForBadToken(t *testing.T) {
-	router := http.NewServeMux()
-	router.HandleFunc("/search", SearchServer)
+func TestFindUsersBadAccessToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+	defer ts.Close()
 
-	testServer := http.Server{
-		Addr:    TestServerURL,
-		Handler: router,
-	}
-
-	request, err := http.NewRequest(http.MethodGet, "", nil)
-	if err != nil {
-		panic(err)
-	}
-	
-
-
-	c := SearchClient{
-		AccessToken: "",
-		URL:         TestServerURL,
-	}
-
-	r := SearchRequest{
-		Limit:      10,
+	srchReq := SearchRequest{
+		Limit:      5,
 		Offset:     0,
-		OrderField: "name",
+		Query:      "",
+		OrderField: "id",
 		OrderBy:    OrderByAsc,
 	}
-	_, err := c.FindUsers(r)
-	t.Log(err.Error())
+	cl := SearchClient{
+		URL: ts.URL,
+	}
+	_, err := cl.FindUsers(srchReq)
 	if err == nil {
 		t.Errorf("test for bad access token failed")
 	}
 }
 
-func TestFindUsersForTimeLimit(t *testing.T) {
+func TestFindUsersTimeout(t *testing.T) {
 	longTimeHandler := func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Second * 3)
 		SearchServer(w, r)
 	}
-
-	s := httptest.NewServer(http.HandlerFunc(longTimeHandler))
-	s.URL = TestServerURL
-	c := SearchClient{AccessToken: "asdfasdf", URL: TestServerURL}
-	r := SearchRequest{
+	ts := httptest.NewServer(http.HandlerFunc(longTimeHandler))
+	req := SearchRequest{
 		Limit:      10,
 		Offset:     0,
-		Query:      "Floyd",
-		OrderField: "age",
+		OrderField: "name",
 		OrderBy:    OrderByAsc,
+		Query:      "",
 	}
-	_, err := c.FindUsers(r)
-	if err != nil {
-		t.Log(err.Error())
+	cl := SearchClient{
+		AccessToken: "some token",
+		URL:         ts.URL,
+	}
+	_, err := cl.FindUsers(req)
+	if err == nil {
+		t.Error("test for timeout failed")
 	}
 }
 
-// func TestFindUsersNormalRequest(t *testing.T) {
-// 	req := SearchRequest{
-// 		Limit:      10,
-// 		Offset:     0,
-// 		OrderField: "id",
-// 		OrderBy:    OrderByAsc,
-// 	}
-
-// 	s := httptest.NewServer(http.HandlerFunc(SearchServer))
-// 	s.URL = TestServerURL
-// 	c := SearchClient{
-// 		AccessToken: "example token",
-// 		URL:         TestServerURL,
-// 	}
-// 	_, err := c.FindUsers(req)
-// 	if err != nil {
-// 		fmt.Println(err.Error())
-// 		t.Errorf("test for normal request is failed")
-// 	}
-// }
+func TestFindUsersNormalRequest(t *testing.T) {
+	goodRequest := SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		OrderField: "name",
+		OrderBy:    OrderByAsIs,
+		Query:      "",
+	}
+	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+	cl := SearchClient{
+		AccessToken: "some token",
+		URL:         ts.URL,
+	}
+	_, err := cl.FindUsers(goodRequest)
+	if err != nil {
+		t.Error("test for normal request failed")
+	}
+}
 
 func TestFindUsersForInternalServerError(t *testing.T) {
-	erHandler := func(w http.ResponseWriter, r *http.Request) {
+	goodRequest := SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		OrderField: "name",
+		OrderBy:    OrderByAsIs,
+		Query:      "",
+	}
+
+	internalErHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
-	s := httptest.NewServer(http.HandlerFunc(erHandler))
-	s.URL = TestServerURL
-	c := SearchClient{
-		AccessToken: "aasdf",
+	ts := httptest.NewServer(http.HandlerFunc(internalErHandler))
+	cl := SearchClient{
+		AccessToken: "some token",
+		URL:         ts.URL,
 	}
-	req := SearchRequest{Limit: 10}
-	_, err := c.FindUsers(req)
-	t.Logf("%s\n", err.Error())
+	_, err := cl.FindUsers(goodRequest)
 	if err == nil {
-		t.Errorf("test failed for internal server error")
+		t.Error("test for internal server error failed")
 	}
+}
+
+func TestFindUsersBadRequest(t *testing.T) {
+	searchRequest := SearchRequest{
+		Limit:      5,
+		Offset:     0,
+		OrderField: "badfield",
+		Query:      "",
+		OrderBy:    OrderByAsc,
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(SearchServer))
+	cl := SearchClient{
+		AccessToken: "some token",
+		URL:         ts.URL,
+	}
+
+	resp, err := cl.FindUsers(searchRequest)
+	if err != nil {
+		t.Log(err.Error())
+	}
+	t.Log(resp)
 }
 
 func TestFindUsers(t *testing.T) {
@@ -492,6 +498,22 @@ func TestFindUsers(t *testing.T) {
 		{
 			"bad offset",
 			TestFindUsersForBadOffset,
+		},
+		{
+			"bad access token",
+			TestFindUsersBadAccessToken,
+		},
+		{
+			"timeout",
+			TestFindUsersTimeout,
+		},
+		{
+			"normal request",
+			TestFindUsersNormalRequest,
+		},
+		{
+			"internal server error",
+			TestFindUsersForInternalServerError,
 		},
 	}
 
