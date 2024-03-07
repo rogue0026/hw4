@@ -131,11 +131,11 @@ func ParseParams(r *http.Request) (*SearchRequest, *SearchErrorResponse) {
 
 	validOrderFields := map[string]struct{}{"id": {}, "age": {}, "name": {}}
 	orderField := r.URL.Query().Get("order_field")
-	if req.OrderField == "" {
-		req.OrderField = "name"
+	if orderField == "" {
+		orderField = "name"
 	}
-	if _, ok := validOrderFields[req.OrderField]; !ok {
-		return nil, &SearchErrorResponse{Error: ErrorBadOrderField}
+	if _, ok := validOrderFields[orderField]; !ok {
+		return nil, &SearchErrorResponse{Error: "ErrorBadOrderField"}
 	} else {
 		req.OrderField = orderField
 	}
@@ -479,11 +479,33 @@ func TestFindUsersBadRequest(t *testing.T) {
 		URL:         ts.URL,
 	}
 
-	resp, err := cl.FindUsers(searchRequest)
+	_, err := cl.FindUsers(searchRequest)
 	if err != nil {
 		t.Log(err.Error())
 	}
-	t.Log(resp)
+}
+
+func TestFindUsersForBadJSONResponse(t *testing.T) {
+	erJSONHandler := func(w http.ResponseWriter, r *http.Request) {
+		js, _ := json.Marshal("some value")
+		w.Write(js)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(erJSONHandler))
+	cl := SearchClient{
+		AccessToken: "some token",
+		URL:         ts.URL,
+	}
+	req := SearchRequest{
+		Limit:      10,
+		Offset:     0,
+		Query:      "somequery",
+		OrderField: "id",
+		OrderBy:    OrderByAsc,
+	}
+	_, err := cl.FindUsers(req)
+	if err == nil {
+		t.Error("test for bad json failed")
+	}
 }
 
 func TestFindUsers(t *testing.T) {
@@ -514,6 +536,14 @@ func TestFindUsers(t *testing.T) {
 		{
 			"internal server error",
 			TestFindUsersForInternalServerError,
+		},
+		{
+			"bad order field param",
+			TestFindUsersBadRequest,
+		},
+		{
+			"bad json response",
+			TestFindUsersForBadJSONResponse,
 		},
 	}
 
